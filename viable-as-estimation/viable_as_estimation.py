@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 ##################################################
-# counter_raptor_resilience.py
-# compute resilience value for given client and guard sets
-# Input:
-# List of Tor client ASes (--client_file, default="../data/top400client.txt")
-# List of Tor guard ASes (--guard_as_file, default="../data/as_guard.txt")
-# CAIDA AS topology (--topology_file, default="../data/20161001.as-rel2.txt")
-# Output:
-# Tor client to guard resiliences (cg_resilience.json)
+# viable-as_estimation.py
 ##################################################
 
-
-# clients observe hijacking
-# Tor guards get hijacked
-# and every AS is a potential adversary
+# in case someone uses python 2.
 from __future__ import division
 import sys
 import json
@@ -26,20 +16,7 @@ import argparse
 from copy import deepcopy
 
 
-def file_len(fname):
-    with open(fname) as f:
-        for i, l in enumerate(f):
-            pass
-    return i + 1
 
-
-
-weight_i = 0
-equal_paths_i = 1
-uphill_hops_i = 2
-has_peering_i = 3
-as_path_length_i = 4
-as_path_i = 5
 
 provider_customer_edges = 0
 peer_peer_edges = 1
@@ -56,303 +33,19 @@ def addTo(dictionary, index, asn):
     else:
         dictionary[index] = set([asn])
 
-def populateAllDictionaries(ans, asRelationshipVal):
-    dictionaryOfRelationships[ans] = asRelationshipVal
-    addTo(asPathLengthSets, asRelationshipVal[as_path_length_i], asn)
-    addTo(uphillHopSets, asRelationshipVal[uphill_hops_i], asn)
-    addTo(hasPeeringSets, 1 if asRelationshipVal[has_peering_i] else 0, asn)
-
-# dictionaryOfRelationships is just a list of ASes and their relationship to the client.
-# node is an AS.
-# dictionaryOfRelationships format: dictionaryOfRelationships[node] = [weight, equal_paths, uphill_hops]
-# Understanding relationships: uphill_hops is simply the number of uphil hops on the path between the vantage point and the origin (from the origin's prospective). Minimizing uphill hops is the most important metric in route preference because it represents local preference based on bussiness relationships.
-# weight is a hacky solution for counting the AS path length and whether the path as a peering relationship on it at the same time. If no peering relationship, weight is simply the number of downhill hops. If there is a peering relationship, weight is the number of hops plus the total number of ASes so this way the weight of a path with a peering relationship will always be more than that of a path without a peering relationship. This is the second metric for AS path preference.
-# equal_paths is not an AS path prefernce metric but rather a method of encoding random path choice into resilience. If two paths tie on the first two metrics, then the number fractional resiliency is the number of equal paths that resolve to the true origin over the number of equal paths that resolve to the adversary plust the number of equal paths that resolve to the true origin.  
-
-# initialize dictionaryOfRelationships
-def init(vantagePoint):
-    global dictionaryOfRelationships
-    dictionaryOfRelationships = {}
-    # Graph is deceptively named. It is better throught of as a dictionary of nodes that stores the weight (which seems to do with level of the dictionaryOfRelationships), the equal paths, and the number of uphill hops.
-    # This node has no weight, 1 equal path, and 0 uphil hops
-    asRelationshipVal = [0, 1, 0, False, 1, vantagePoint]
-    populateAllDictionaries(vantagePoint, asRelationshipVal)
 
 
-# provider to customer
-# q_list appears to be a list of ASes to process.
-def breath_first_search_provider_customer(listOfASesToProcess):
-    global dictionaryOfRelationships, asdict
-    # deque does not pop an element, it builts a que out of a list.
-    # queOfASesToProcess is the same as listOfASesToProcess but is now in que format.
-    queOfASesToProcess = deque(listOfASesToProcess)
-    while queOfASesToProcess:
-        # gets the current que.
-        currentASNBeingProcessed = queOfASesToProcess.popleft()
-        # get the current point in the AS dictionaryOfRelationships and store it as currentASNsRelationship
-        currentASNsRelationship = dictionaryOfRelationships[currentASNBeingProcessed]
-
-        # asdict is the relationships loaded from the CAIDA file. The format is:
-        # asdict[asn] = [[provider-customer edges],[peer-to-peer edges],[customer-provider edges]]
-        # asdict[current][0] is the provider-customer edges of the current AS that is being processed.
-        for customer in asdict[currentASNBeingProcessed][provider_customer_edges]:
-            # every node is a provider customer edge of the current AS.
-            if customer not in dictionaryOfRelationships:
-                # Increase the weight by 1.
-                populateAllDictionaries(customer, [currentASNsRelationship[weight_i] + 1, currentASNsRelationship[equal_paths_i], currentASNsRelationship[uphill_hops_i], currentASNsRelationship[has_peering_i], currentASNsRelationship[as_path_length_i] + 1, customer + " " + currentASNsRelationship[as_path_i]])
-                dictionaryOfRelationships[customer] = [currentASNsRelationship[weight_i] + 1, currentASNsRelationship[equal_paths_i], currentASNsRelationship[uphill_hops_i]]
-                queOfASesToProcess.append(customer)
-            elif dictionaryOfRelationships[customer][weight_i] == currentASNsRelationship[weight_i] + 1 and dictionaryOfRelationships[customer][uphill_hops_i] == currentASNsRelationship[uphill_hops_i]:
-                # I think the above line might need to also compare uphill hops not just weights which only take into account downhill hops and peerings.
-                # If this customer AS is already in the relationshipDictionary with a weight equal more than the current ASes weight, then simply increase the number of equal paths by the number of equal paths to get to the current AS.
-                dictionaryOfRelationships[customer][equal_paths_i] += currentASNsRelationship[equal_paths_i]
-
-# peer to peer
-def breath_first_search_peer_peer(listOfASesToProcess):
-    global dictionaryOfRelationships, asdict, total_as
-    q = deque()
-    for asBeingProcessed in listOfASesToProcess:
-        for peer in asdict[asBeingProcessed][peer_peer_edges]:
-            if peer not in dictionaryOfRelationships:
-                # This line might explain weight. Weight for provider to client paths is simply the number of hops (which = downhill hops). If there is peering relationship along the path the weight has a factor of total_as added so the weight of a path with a peering relationship will always be more than a path that is all provider client.
-                dictionaryOfRelationships[peer] = [dictionaryOfRelationships[asBeingProcessed][weight_i] + total_as, dictionaryOfRelationships[asBeingProcessed][equal_paths_i], dictionaryOfRelationships[asBeingProcessed][uphill_hops_i]]
-                q.append(peer)
-            elif dictionaryOfRelationships[peer][weight_i] == dictionaryOfRelationships[asBeingProcessed][weight_i] + total_as and dictionaryOfRelationships[peer][uphill_hops_i] == dictionaryOfRelationships[asBeingProcessed][uphill_hops_i]:
-                # almost identical to the line in search provider customer, if the node is already in the relationship dictionary with the expected weight, simpl yincrease the number of equal paths.
-                dictionaryOfRelationships[peer][equal_paths_i] += dictionaryOfRelationships[asBeingProcessed][equal_paths_i]
-    
-    # Every peer edge can be followed by any number of provider customer edges so we simply need to begin processing down the graph after we have inserted a relationship entry for all of the peers we need to process.
-    while q:
-        currentASNBeingProcessed = q.popleft()
-        currentASNsRelationship = dictionaryOfRelationships[currentASNBeingProcessed]
-
-        for customer in asdict[currentASNBeingProcessed][provider_customer_edges]:
-            if customer not in dictionaryOfRelationships:
-                dictionaryOfRelationships[customer] = [currentASNsRelationship[weight_i] + 1, currentASNsRelationship[equal_paths_i], currentASNsRelationship[uphill_hops_i]]
-                q.append(customer)
-            elif dictionaryOfRelationships[customer][weight_i] == currentASNsRelationship[weight_i] + 1  and dictionaryOfRelationships[customer][uphill_hops_i] == currentASNsRelationship[uphill_hops_i]:
-                dictionaryOfRelationships[customer][equal_paths_i] += currentASNsRelationship[equal_paths_i]
-
-# customer to provider
-def breath_first_search_customer_provider(vantagePoint):
-    global dictionaryOfRelationships, asdict
-    q = deque([vantagePoint])
-    curlst = []
-    # start at the vantagePoint of the dictionaryOfRelationships. We will then go up to examine this ASes providers.
-    curlevel = 0
-    while q:
-        currentASNBeingProcessed = q.popleft()
-        # val is the weight, equal paths, and uphil hops.
-        currentASNsRelationship = dictionaryOfRelationships[currentASNBeingProcessed]
-        # If we are at a new level, first we search down the graph across peering and customer edges before we continue to look at the provider edges of this new level.
-        if currentASNsRelationship[uphill_hops_i] > curlevel:
-            # if the value is creater than the current number of uphil hops, go down the dictionaryOfRelationships from each one of the ASes in the current level to populate ASes below in the dictionaryOfRelationships.
-
-            breath_first_search_provider_customer(curlst)
-
-            # now go across to the peers.
-            breath_first_search_peer_peer(curlst)
-
-            # reset the list of ASes in the current level.
-            curlst = []
-
-            # increase the current level to this ASes level.
-            curlevel = currentASNsRelationship[uphill_hops_i]
-        for provider in asdict[currentASNBeingProcessed][customer_provider_edges]:
-            # node is each AS in the list of providers.
-            if provider not in dictionaryOfRelationships:
-                # Populate the dictionaryOfRelationships with the values for the new node.
-                # node is a provider of the vantagePoint.
-                # val[0] is the same because it is the weight. Val 1 is the same because there is only 1 equal length path. val[2] is incremented by 1 such that there is one more uphil hop.
-                dictionaryOfRelationships[provider] = [currentASNsRelationship[weight_i], currentASNsRelationship[equal_paths_i], currentASNsRelationship[uphill_hops_i] + 1]
-                # put node in the que for processing. next.
-                q.append(provider)
-
-                # append node to the list of current nodes in this level.
-                curlst.append(provider)
-            elif dictionaryOfRelationships[provider][uphill_hops_i] == (currentASNsRelationship[uphill_hops_i]+1):
-                # this is the case where we have already fhound a round to this node becuase it was already in the dictionaryOfRelationships.
-                # We do not need to compare weights in the above line because the path to provider must either have fewer uphill hops (meaning it was at a previous level) or must have the same number of uphill hops in which case it has not downhill hops because downhill hops at this level have not been populated.
-                # thus we increment the number of equal length paths by 1.
-                dictionaryOfRelationships[provider][equal_paths_i] += currentASNsRelationship[equal_paths_i]
-
-# traverse nodes to calculate resiliency
-def update_resilience(vantagePoint, vantagePointExcluded):
-    global dictionaryOfRelationships, originSet, total_as, outFile, currentLineNumber, numberOfVantagePointLines
-
-    if vantagePointExcluded:
-        del dictionaryOfRelationships[vantagePoint]
-    # sort all the ASes in the dictionaryOfRelationships by 
-    # k_v is a dictionaryOfRelationships item.
-    # k_v[1] is the value.
-    # here we are sorting the ASes by the number of uphil hops primarily and then subsorting by the weight.
-    # This is like ORDER BY uphil_hops, weight
-    # Here k_v[0] is the ASN, and k_v[1] is the associated data.
-    # k_v[1][2] is the number of uphill hops
-    # k_v[1][0] is the path weight
-    # by generating a tuple, sort is told to sort first by the number of uphill hops and then use the weight as a tie breaker.
-    # Sorted uses (primary key, secondary key)
-    # I think this could be made more readable with reverse = True and removing the - signs on the key.
-    asn_i = 0
-    relationship_i = 1
-    listOfRelationshipsSortedWithKeys = sorted(list(dictionaryOfRelationships.items()), key=lambda asRelationshipKVP: (-asRelationshipKVP[relationship_i][uphill_hops_i],-asRelationshipKVP[relationship_i][weight_i]))
-    # L2 simply turns this from a list of KVPs into a list of AS numbers by dropping all of the associated info.
-    listOfASNSSorted = [kvp[asn_i] for kvp in listOfRelationshipsSortedWithKeys]
-
-    # unreachable is the number of ASes that were in the AS dictionaryOfRelationships that we were unable to find a route to from the node.
-    # because we could not find a route they are not in the dictionaryOfRelationships and thus not in listOfASNSSorted.
-    # so we can subtract the total number of ASes from the ASes in listOfASNSSorted
-    # the root that we used to key the dictionaryOfRelationships is not going to be included in listOfASNSSorted but should not be considered an unreachable AS.
-    # that is why there is the - 1.
-    # The inclusion of the vantage point its self in the result is debateable. If the vantage point is NOT included in listOfASNSSorted it must be removed from this line as well so it is not included as an unreachable AS.
-    unreachableASes = None
-    if vantagePointExcluded:
-        unreachableASes = set(asdict.keys()) - set(listOfASNSSorted) - set([vantagePoint])
-    else:
-        unreachableASes = set(asdict.keys()) - set(listOfASNSSorted)
 
 
-    #print "number of unreachable nodes is %i" % unreachable
-    # nodes is the number of ASes that have less preferred paths.
-    numberOfASesWithLessPreferredPaths = 0
-    listOfASesWithLessPreferredPaths = []
-    prev = ()
-    # This will be used for Beta calculations (num eq paths victim/(num eq paths adversary + num eq paths victim))
-    numberOfASesWithEquallyPreferredPaths = 0
-    listOfASesWithEquallyPreferredPaths = []
-
-    listOfASesWithMorePreferredPaths = listOfASNSSorted[:]
-
-    firstOrigin = True
-
-    for asn in unreachableASes:
-        if asn in originSet:
-            resilienceObject = {}
-            for attackerASN in unreachableASes:
-                if attackerASN != asn:
-                    resilienceObject[attackerASN] = 0
-            for attackerASN in listOfASesWithMorePreferredPaths:
-                resilienceObject[attackerASN] = 0
-            if firstOrigin:
-                firstOrigin = False
-            else:
-                outFile.write(",")
-            outFile.write('"{}":'.format(asn))
-            json.dump(resilienceObject, outFile)
-
-
-    originsNotInTopology = originSet - set(asdict.keys())
-
-    for asn in originsNotInTopology:
-        resilienceObject = {}
-        for attackerASN in unreachableASes:
-            resilienceObject[attackerASN] = 0
-        for attackerASN in listOfASesWithMorePreferredPaths:
-            resilienceObject[attackerASN] = 0
-        if firstOrigin:
-            firstOrigin = False
-        else:
-            outFile.write(",")
-        outFile.write('"{}":'.format(asn))
-        json.dump(resilienceObject, outFile)
-
-    if vantagePointExcluded and vantagePoint in originSet:
-        resilienceObject = {}
-        for attackerASN in unreachableASes:
-            resilienceObject[attackerASN] = 1
-        for attackerASN in listOfASesWithMorePreferredPaths:
-            # This is somewhat misleading but the vantage point is preferable to all ASes.
-            resilienceObject[attackerASN] = 1
-        if firstOrigin:
-            firstOrigin = False
-        else:
-            outFile.write(",")
-        outFile.write('"{}":'.format(vantagePoint))
-        json.dump(resilienceObject, outFile)
-
-            
-    buffer = []
-
-    resilienceObject = {}
-    for attackerASN in unreachableASes:
-        resilienceObject[attackerASN] = 1
-    for attackerASN in listOfASesWithMorePreferredPaths:
-        resilienceObject[attackerASN] = 0
-    for asn in listOfASNSSorted:
-        print("ASes processed: {}, Percentage: {}".format(total_as - len(listOfASesWithMorePreferredPaths), ((currentLineNumber - 1 + ((total_as - len(listOfASesWithMorePreferredPaths)) / total_as)) / numberOfVantagePointLines) * 100.0))
-        currentASNsRelationship = dictionaryOfRelationships[asn]
-        if prev==(currentASNsRelationship[weight_i],currentASNsRelationship[uphill_hops_i]):
-            numberOfASesWithEquallyPreferredPaths += 1
-            listOfASesWithEquallyPreferredPaths.append((asn, currentASNsRelationship[equal_paths_i]))
-            if asn in originSet:
-                buffer.append((asn,currentASNsRelationship[equal_paths_i]))
-            listOfASesWithMorePreferredPaths.remove(asn)
-        else:
-            for asnEqualPathsTuple in buffer:
-
-                # this line puts the resiliance of each tor node in from the perspective of the client we constructed the dictionaryOfRelationships for.
-                # It computes the number of ASes that can NOT hijack this tor node.
-                # It is a number of ASes not a percentage. It is normalized to a percentage around line 267 where it is divided by the toal ASes - 2
-                # I think this line might be wrong as well because we need to add the number of equal paths that this ASN has / this ASNs equal paths + each competitors equal paths at this level. Not just a single addition.
-                # The current caluclation the equal paths portion of the resilience cannot count more than a single ASN, but if an ASN is equal with 4 ASNs and has 1 equal path, it should have a resilience of 2 ANS (before deviding by total ASNs) or .5 after dividing.
-                # We need to subtract .5 from the summation of Beta to prevent double counting an ASes path to its self in beta.
-                
-                # compute the resiliences for ASes with equally preferred paths
-                # Less and more preferrred paths should already be in the resilience object.
-                for attackerASNEqualPathsTuple in listOfASesWithEquallyPreferredPaths:
-                    if attackerASNEqualPathsTuple[0] != asnEqualPathsTuple[0]:
-                        resilienceObject[attackerASNEqualPathsTuple[0]] = asnEqualPathsTuple[1] / (asnEqualPathsTuple[1] + attackerASNEqualPathsTuple[1])
-                    else:
-                        del resilienceObject[asnEqualPathsTuple[0]]
-                if firstOrigin:
-                    firstOrigin = False
-                else:
-                    outFile.write(",")
-                outFile.write('"{}":'.format(asnEqualPathsTuple[0]))
-                json.dump(resilienceObject, outFile)
-                # Flushing output allows for better crash recovery but slows down performance.
-                #outFile.flush()
-            
-
-            numberOfASesWithLessPreferredPaths += numberOfASesWithEquallyPreferredPaths
-            listOfASesWithLessPreferredPaths.extend([asnTuple[0] for asnTuple in listOfASesWithEquallyPreferredPaths])
-
-            for attackerASNEqualPathsTuple in listOfASesWithEquallyPreferredPaths:
-                resilienceObject[attackerASNEqualPathsTuple[0]] = 1
-
-            numberOfASesWithEquallyPreferredPaths = 1
-            listOfASesWithEquallyPreferredPaths = [(asn,currentASNsRelationship[equal_paths_i])]
-            prev = (currentASNsRelationship[weight_i],currentASNsRelationship[uphill_hops_i])
-            if asn in originSet:
-                buffer = [(asn,currentASNsRelationship[equal_paths_i])]
-            else:
-                buffer = []
-            listOfASesWithMorePreferredPaths.remove(asn)
-    # leftover ASes in buffer
-    for asnEqualPathsTuple in buffer:
-        if firstOrigin:
-            firstOrigin = False
-        else:
-            outFile.write(",")
-        for attackerASNEqualPathsTuple in listOfASesWithEquallyPreferredPaths:
-            if attackerASNEqualPathsTuple[0] != asnEqualPathsTuple[0]:
-                resilienceObject[attackerASNEqualPathsTuple[0]] = asnEqualPathsTuple[1] / (asnEqualPathsTuple[1] + attackerASNEqualPathsTuple[1])
-            else:
-                del resilienceObject[asnEqualPathsTuple[0]]
-        outFile.write('"{}":'.format(asnEqualPathsTuple[0]))
-        json.dump(resilienceObject, outFile)
-        #outFile.flush()
 def parse_args():
     parser = argparse.ArgumentParser()
     # This is a CAIDA AS topology.
     parser.add_argument("--topology_file",
                         default="./20190301.as-rel2.txt")
-    # These are the ASes that we are using as vantage points.
-    parser.add_argument("--client_file",
-                        default="../data/vantage-points.txt")
-    # These are the ASNs that we are calculating the resilience for.
-    parser.add_argument("--guard_as_file",
-                        default="../data/origins.txt")
+    parser.add_argument("--as_forward",
+                        default= "./as_forward.csv")
+    parser.add_argument("--as_full_support",
+                        default= "./as_full_support.csv")
     return parser.parse_args()
 
 outFile = None
@@ -531,11 +224,11 @@ def main(args):
                 asdict[asn2][abs(rel)+1] = [asn1]
 
 
-    with open("./list of ASNs with full community support.txt") as fullSupportFile:
+    with open(args.as_full_support) as fullSupportFile:
         for line in fullSupportFile:
             asnsWithFullCommunitySupport.add(line.strip())
 
-    with open("./as_forward.csv") as forwardFile:
+    with open(args.as_forward) as forwardFile:
         for line in forwardFile:
             line = line.strip()
             if line == "":
