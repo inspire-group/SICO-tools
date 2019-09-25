@@ -1,0 +1,11 @@
+Victim VPN tunnels required: neu01
+Victim BGP sessions used: neu01
+Victim announcement:
+./peering prefix announce -m neu01 IP_PREFIX
+
+Adversary VPN tunnels required: amsterdam01
+Adversary BGP sessions used: amsterdam01
+Adversary announcement:
+./peering prefix announce -m amsterdam01 -c 47065,1061 -c 47065,1060 -c 0,12859 -c 2914,4211 -l 8283,4,12859 -l 8283,4,34307 -l 8283,4,286 IP_PREFIX
+
+Note the addition of the 47065 communities. These are to prevent the peering testbed itself from making this announcement directly to BIT BV's routers. We did not include these communities in the table because they are not applicable outside of the PEERING testbed.

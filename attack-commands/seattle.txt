@@ -1,0 +1,12 @@
+Victim VPN tunnels required: neu01
+Victim BGP sessions used: neu01
+Victim announcement:
+./peering prefix announce -m neu01 IP_PREFIX
+
+
+Adversary VPN tunnels required: amsterdam01, seattle01
+Adversary BGP sessions used: seattle01
+Adversary announcement:
+./peering prefix announce -m seattle01 -c 65500,3356 -c 65500,174 -c 65000,3356 -c 65000,174 IP_PREFIX
+
+When the adversary announcement is launched against the above victim announcement, the adversary node is able to attract traffic at Seattle and tunnel traffic to the victim via Coloclue in Amsterdam (note the Seattle experiment requires a VPN tunnel to be established to Amsterdam since Seattle only has one transit provider).
