@@ -1,5 +1,9 @@
 # RouteViews BGP updates processing
 
+## Dependency
+
+Python-wget, bgpdump (https://bitbucket.org/ripencc/bgpdump/wiki/Home)
+
 ## Download a given month of updates
 
 ```
