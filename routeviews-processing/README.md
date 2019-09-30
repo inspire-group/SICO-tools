@@ -28,6 +28,10 @@ python preprocess.py [collector_name] [month] [thread_no]
 [out_dir] [logger_name]
 ```
 @collector_name: the name of the collector  
-@out_dir: the name of the directory where processed results are stored. 
+@out_dir: the name of the directory where processed results are stored.
+
+```
+python preprocess.py route-views1 2019.07 20 tmp tmp.log
+``` 
 
 
